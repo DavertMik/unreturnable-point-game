@@ -1,0 +1,25 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Game Rules
+
+## Bunker
+- The bunker is an unbreakable platform where the player spawns (has a bed).
+- The bunker is initially a 10x10 block platform, centered at (0,0,0), at y=0.
+- The bunker can be expanded by upgrading it.
+
+## Wilderness
+- The wilderness is a 50x50 (initially, but design says 300x300) block area made of clay blocks, centered at (0,0,0), at y=0.
+- The wilderness is flat by default but will be transformed over time.
+- Zombies randomly spawn across the wilderness.
+- The wilderness can be terraformed in real time (10s delay). Example: a point 5 blocks above ground is chosen, and 10x10 blocks below grow towards it every 10s until the point is reached. Then a new point is chosen and the process repeats.
+
+## Player
+- The player spawns in the bunker.
+- The player has a gun and can upgrade guns in the bunker.
+
+## Map
+- The bunker and wilderness are stored as separate map files and merged at game start, so the bunker can be edited independently.
+

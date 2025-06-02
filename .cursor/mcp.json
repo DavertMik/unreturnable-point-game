@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "hytopia-helper": {
+      "command": "/home/davert/.bun/bin/bun",
+      "args": [
+        "x",
+        "-y",
+        "topia-mcp@latest",
+        "serve",
+        "--dir",
+        "/home/davert/demos/hytopia-dune"
+      ]
+    }
+  }
+}
