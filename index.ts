@@ -170,6 +170,11 @@ startServer(world => {
   
     playerEntity.spawn(world, { x: 0, y: 10, z: 0 });
 
+    // Set camera for over-the-shoulder view
+    player.camera.setOffset({ x: 0, y: 1, z: 0 });
+    player.camera.setForwardOffset(0.3);
+    player.camera.setFilmOffset(0.5);
+
     // Enable block breaking with a stick for this player
     enableBlockBreaking(playerEntity);
 

@@ -72,33 +72,53 @@ export class PickaxeEntity extends Entity {
     // Play sword hit animation (if available)
     this.startModelOneshotAnimations(['attack']);
     // Play player sword swing animation
-    player.startModelOneshotAnimations(['sword-attack-upper']);
-    const origin = player.position;
-    const direction = player.player.camera.facingDirection;
-    const hit = world.simulation.raycast(origin, direction, this.range, { filterExcludeRigidBody: player.rawRigidBody });
-    if (hit?.hitBlock) {
-      // Prevent breaking the block the player is standing on
-      const standingBlock = {
-        x: Math.floor(player.position.x),
-        y: Math.floor(player.position.y - 0.1), // slightly below feet
-        z: Math.floor(player.position.z)
-      };
-      const hitBlock = hit.hitBlock.globalCoordinate;
-      // Prevent breaking blocks at y <= 0
-      if (hitBlock.y <= 0) {
-        return;
+    player.startModelOneshotAnimations(['simple-interact']);
+
+    // Compute horizontal facing direction (ignore Y)
+    const facing = player.player.camera.facingDirection;
+    const horizontalDir = { x: facing.x, y: 0, z: facing.z };
+    const length = Math.sqrt(horizontalDir.x * horizontalDir.x + horizontalDir.z * horizontalDir.z);
+    if (length === 0) return;
+    horizontalDir.x /= length;
+    horizontalDir.z /= length;
+
+    // Try breaking two blocks vertically: at feet and one above
+    const origins = [
+      { x: player.position.x, y: player.position.y, z: player.position.z },
+      { x: player.position.x, y: player.position.y + 1, z: player.position.z }
+    ];
+    let brokeBlock = false;
+    for (const origin of origins) {
+      const hit = world.simulation.raycast(origin, horizontalDir, this.range, { filterExcludeRigidBody: player.rawRigidBody });
+      if (hit?.hitBlock) {
+        // Prevent breaking the block the player is standing on
+        const standingBlock = {
+          x: Math.floor(player.position.x),
+          y: Math.floor(player.position.y - 0.1), // slightly below feet
+          z: Math.floor(player.position.z)
+        };
+        const hitBlock = hit.hitBlock.globalCoordinate;
+        // Prevent breaking blocks at y <= 0
+        if (hitBlock.y <= 0) {
+          continue;
+        }
+        if (
+          hitBlock.x === standingBlock.x &&
+          hitBlock.y === standingBlock.y &&
+          hitBlock.z === standingBlock.z
+        ) {
+          continue; // Don't break the block under the player
+        }
+        // Play sword swing animation again when block is broken
+        player.startModelOneshotAnimations(['simple-interact']);
+        // Delay block breaking by 100ms for animation
+        setTimeout(() => {
+          TerrainManager.instance.damageBlock(world, hit.hitBlock, this.damage);
+        }, 100);
+        brokeBlock = true;
       }
-      if (
-        hitBlock.x === standingBlock.x &&
-        hitBlock.y === standingBlock.y &&
-        hitBlock.z === standingBlock.z
-      ) {
-        return; // Don't break the block under the player
-      }
-      // Play sword swing animation again when block is broken
-      player.startModelOneshotAnimations(['sword-attack-upper']);
-      TerrainManager.instance.damageBlock(world, hit.hitBlock, this.damage);
     }
+    // Optionally: feedback if no block was broken
   }
 }
 
@@ -108,6 +128,14 @@ export function enableBlockBreaking(playerEntity: DefaultPlayerEntity) {
   const sword = new PickaxeEntity(playerEntity);
   sword.spawnCorrectly(playerEntity.world);
   playerEntity.controller.on(BaseEntityControllerEvent.TICK_WITH_PLAYER_INPUT, ({ input }: { input: any }) => {
+    // Prevent player from falling below y=0
+    if (playerEntity.position.y < 1) {
+      playerEntity.setPosition({
+        x: playerEntity.position.x,
+        y: 5,
+        z: playerEntity.position.z
+      });
+    }
     if (input.ml) {
       sword.use();
       input.ml = false;
