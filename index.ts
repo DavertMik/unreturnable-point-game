@@ -32,6 +32,7 @@ import {
 
 import worldMap from './assets/map.json';
 import { Terraforming } from './terraforming';
+import { enableBlockBreaking } from './blockBreaking';
 
 /**
  * startServer is always the entry point for our game.
@@ -169,6 +170,9 @@ startServer(world => {
   
     playerEntity.spawn(world, { x: 0, y: 10, z: 0 });
 
+    // Enable block breaking with a stick for this player
+    enableBlockBreaking(playerEntity);
+
     // Load our game UI for this player
     player.ui.load('ui/index.html');
 
@@ -178,6 +182,7 @@ startServer(world => {
     world.chatManager.sendPlayerMessage(player, 'Press space to jump.');
     world.chatManager.sendPlayerMessage(player, 'Hold shift to sprint.');
     world.chatManager.sendPlayerMessage(player, 'Press \\ to enter or exit debug view.');
+    world.chatManager.sendPlayerMessage(player, 'Left click to break blocks with your stick!', 'FFFF00');
     world.chatManager.sendPlayerMessage(player, '🏔️ 5 terraforming zones are active across the map!', 'FFFF00');
     world.chatManager.sendPlayerMessage(player, 'Zone 1: Stone Hills (60,60) | Zone 2: Clay (−70,−50)', '00FFFF');
     world.chatManager.sendPlayerMessage(player, 'Zone 3: Dirt (−40,80) | Zone 4: Sand (85,−65) | Zone 5: Grass (10,−10)', '00FFFF');
