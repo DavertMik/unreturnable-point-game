@@ -5,6 +5,8 @@ interface TerraformingTarget {
   y: number;
   z: number;
   startTime: number; // Track when this target started
+  spawnerPosition?: { x: number; y: number; z: number }; // Position of spawner block
+  isActive: boolean; // Whether this target is still active
 }
 
 interface TerraformingOptions {
@@ -16,6 +18,9 @@ interface TerraformingOptions {
   terraformSize?: number;
   blockTypeId?: number;
   elevationSpeed?: number; // How fast the elevation spreads outward
+  spawnerBlockId?: number; // Block ID for the spawner block (dragons-stone)
+  initialSpawnPoints?: Array<{ x: number; z: number }>; // Initial spawn points
+  spawnerSpreadRadius?: number; // Radius for new spawner placement
 }
 
 export class Terraforming {
@@ -28,10 +33,16 @@ export class Terraforming {
   private terraformSize: number;
   private blockTypeId: number;
   private elevationSpeed: number;
+  private spawnerBlockId: number;
+  private initialSpawnPoints: Array<{ x: number; z: number }>;
+  private spawnerSpreadRadius: number;
   
   private currentTarget: TerraformingTarget | null = null;
   private intervalId: NodeJS.Timeout | null = null;
   private isActive: boolean = false;
+  private completedTargets: TerraformingTarget[] = []; // Track all targets (active and completed)
+  private spawnerPositions: Set<string> = new Set(); // Track spawner block positions
+  private hasInitialSpawners: boolean = false; // Track if initial spawners have been created
 
   constructor(world: World, options: TerraformingOptions) {
     this.world = world;
@@ -43,6 +54,13 @@ export class Terraforming {
     this.terraformSize = options.terraformSize ?? 10; // 10x10 area default
     this.blockTypeId = options.blockTypeId ?? 2; // clay default
     this.elevationSpeed = options.elevationSpeed ?? 0.5; // How fast elevation spreads per step
+    this.spawnerBlockId = options.spawnerBlockId ?? 19; // stone block ID (dragons-stone texture)
+    this.spawnerSpreadRadius = options.spawnerSpreadRadius ?? 10; // 10 blocks radius for new spawners
+    
+    // Set default initial spawn points if none provided
+    this.initialSpawnPoints = options.initialSpawnPoints ?? [
+      { x: this.centerX, z: this.centerZ }, // Center point
+    ];
   }
 
   /**
@@ -83,28 +101,185 @@ export class Terraforming {
   }
 
   /**
+   * Remove all spawner blocks
+   */
+  clearAllSpawners(): void {
+    this.spawnerPositions.forEach(posKey => {
+      const parts = posKey.split(',');
+      if (parts.length >= 3) {
+        const x = parseInt(parts[0]!, 10);
+        const y = parseInt(parts[1]!, 10);
+        const z = parseInt(parts[2]!, 10);
+        this.setBlock(x, y, z, 0); // Remove spawner block (set to air)
+      }
+    });
+    this.spawnerPositions.clear();
+    console.log('All terraforming spawners cleared');
+  }
+
+  /**
    * Select a new random target within the terraforming area
    */
   private selectNewTarget(): void {
-    const halfSize = Math.floor(this.size / 2);
-    const minX = this.centerX - halfSize;
-    const maxX = this.centerX + halfSize - 1;
-    const minZ = this.centerZ - halfSize;
-    const maxZ = this.centerZ + halfSize - 1;
+    // If we don't have initial spawners yet, create them first
+    if (!this.hasInitialSpawners) {
+      this.createInitialSpawners();
+      return;
+    }
 
-    // Ensure the target is within bounds, accounting for terraform size
-    const terraformHalf = Math.floor(this.terraformSize / 2);
-    const targetX = Math.floor(Math.random() * (maxX - minX + 1 - this.terraformSize)) + minX + terraformHalf;
-    const targetZ = Math.floor(Math.random() * (maxZ - minZ + 1 - this.terraformSize)) + minZ + terraformHalf;
+    // Find a valid position near existing spawners
+    const validPosition = this.findValidSpawnerPosition();
+    
+    if (!validPosition) {
+      console.log('No valid position found for new spawner near existing spawners');
+      return;
+    }
 
     this.currentTarget = {
-      x: targetX,
+      x: validPosition.x,
       y: this.targetHeight,
-      z: targetZ,
-      startTime: Date.now()
+      z: validPosition.z,
+      startTime: Date.now(),
+      isActive: true
     };
 
-    console.log(`New terraforming target: (${targetX}, ${this.targetHeight}, ${targetZ})`);
+    // Create spawner block at the new target position
+    this.createSpawnerBlock();
+
+    console.log(`New terraforming target: (${validPosition.x}, ${this.targetHeight}, ${validPosition.z})`);
+  }
+
+  /**
+   * Create initial spawners at predefined points
+   */
+  private createInitialSpawners(): void {
+    console.log('Creating initial spawners...');
+    
+    for (const spawnPoint of this.initialSpawnPoints) {
+      // Check if spawn point is within terraforming bounds
+      if (!this.isWithinBounds(spawnPoint.x, spawnPoint.z)) {
+        console.warn(`Initial spawn point (${spawnPoint.x}, ${spawnPoint.z}) is outside terraforming bounds`);
+        continue;
+      }
+
+      // Create target for this initial spawn point
+      const target: TerraformingTarget = {
+        x: spawnPoint.x,
+        y: this.targetHeight,
+        z: spawnPoint.z,
+        startTime: Date.now(),
+        isActive: true
+      };
+
+      // Create spawner block
+      const targetHeight = this.getCurrentHeight(spawnPoint.x, spawnPoint.z);
+      const spawnerY = Math.max(targetHeight + 2, 2);
+      
+      this.setBlock(spawnPoint.x, spawnerY, spawnPoint.z, this.spawnerBlockId);
+      
+      // Track spawner position
+      const spawnerPosition = { x: spawnPoint.x, y: spawnerY, z: spawnPoint.z };
+      const posKey = `${spawnerPosition.x},${spawnerPosition.y},${spawnerPosition.z}`;
+      this.spawnerPositions.add(posKey);
+      
+      target.spawnerPosition = spawnerPosition;
+      
+      console.log(`Initial spawner created at: (${spawnerPosition.x}, ${spawnerPosition.y}, ${spawnerPosition.z})`);
+    }
+    
+    this.hasInitialSpawners = true;
+    
+    // Now select the first target from initial spawners
+    if (this.initialSpawnPoints.length > 0) {
+      const firstSpawn = this.initialSpawnPoints[0];
+      if (firstSpawn && this.isWithinBounds(firstSpawn.x, firstSpawn.z)) {
+        this.currentTarget = {
+          x: firstSpawn.x,
+          y: this.targetHeight,
+          z: firstSpawn.z,
+          startTime: Date.now(),
+          isActive: true,
+          spawnerPosition: this.findSpawnerPositionAt(firstSpawn.x, firstSpawn.z)
+        };
+      }
+    }
+  }
+
+  /**
+   * Find a valid position for a new spawner near existing spawners
+   */
+  private findValidSpawnerPosition(): { x: number; z: number } | null {
+    const activeSpawners = this.getActiveSpawnerPositions();
+    
+    if (activeSpawners.length === 0) {
+      console.warn('No active spawners found to spread from');
+      return null;
+    }
+
+    // Try to find a valid position near each active spawner
+    for (let attempts = 0; attempts < 50; attempts++) {
+      // Pick a random active spawner to spread from
+      const sourceSpawner = activeSpawners[Math.floor(Math.random() * activeSpawners.length)];
+      
+      if (!sourceSpawner) {
+        continue; // Skip if no spawner found
+      }
+      
+      // Generate random position within spread radius
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Math.random() * this.spawnerSpreadRadius;
+      
+      const newX = Math.round(sourceSpawner.x + Math.cos(angle) * distance);
+      const newZ = Math.round(sourceSpawner.z + Math.sin(angle) * distance);
+      
+      // Check if position is valid
+      if (this.isValidSpawnerPosition(newX, newZ)) {
+        return { x: newX, z: newZ };
+      }
+    }
+    
+    return null; // No valid position found after all attempts
+  }
+
+  /**
+   * Check if a position is valid for placing a new spawner
+   */
+  private isValidSpawnerPosition(x: number, z: number): boolean {
+    // Must be within terraforming bounds
+    if (!this.isWithinBounds(x, z)) {
+      return false;
+    }
+    
+    // Must not already have a spawner nearby (minimum distance of 5 blocks)
+    const minDistance = 5;
+    const activeSpawners = this.getActiveSpawnerPositions();
+    
+    for (const spawner of activeSpawners) {
+      const distance = Math.sqrt((x - spawner.x) ** 2 + (z - spawner.z) ** 2);
+      if (distance < minDistance) {
+        return false; // Too close to existing spawner
+      }
+    }
+    
+    // Must be within spread radius of at least one existing spawner
+    let nearExistingSpawner = false;
+    for (const spawner of activeSpawners) {
+      const distance = Math.sqrt((x - spawner.x) ** 2 + (z - spawner.z) ** 2);
+      if (distance <= this.spawnerSpreadRadius) {
+        nearExistingSpawner = true;
+        break;
+      }
+    }
+    
+    return nearExistingSpawner;
+  }
+
+  /**
+   * Find spawner position at given coordinates
+   */
+  private findSpawnerPositionAt(x: number, z: number): { x: number; y: number; z: number } | undefined {
+    const activeSpawners = this.getActiveSpawnerPositions();
+    return activeSpawners.find(spawner => spawner.x === x && spawner.z === z);
   }
 
   /**
@@ -112,6 +287,22 @@ export class Terraforming {
    */
   private terraformStep(): void {
     if (!this.currentTarget) {
+      this.selectNewTarget();
+      return;
+    }
+
+    // Check if current target is still active (spawner not destroyed)
+    if (!this.currentTarget.isActive) {
+      console.log('Current target is inactive (spawner destroyed), selecting new target');
+      this.selectNewTarget();
+      return;
+    }
+
+    // Check if spawner block still exists
+    if (this.currentTarget.spawnerPosition && !this.isSpawnerBlockPresent(this.currentTarget.spawnerPosition)) {
+      console.log('Spawner block was destroyed, stopping terraforming for this target');
+      this.currentTarget.isActive = false;
+      this.onSpawnerDestroyed(this.currentTarget.spawnerPosition);
       this.selectNewTarget();
       return;
     }
@@ -175,6 +366,10 @@ export class Terraforming {
     // If target is complete (all blocks have reached their target height), select a new one
     if (targetComplete) {
       console.log('Parabolic hill completed, selecting new target');
+      // Mark current target as completed and add to completed targets
+      if (this.currentTarget) {
+        this.completedTargets.push(this.currentTarget);
+      }
       this.selectNewTarget();
     }
   }
@@ -230,6 +425,109 @@ export class Terraforming {
   }
 
   /**
+   * Create a spawner block at the current target position
+   */
+  private createSpawnerBlock(): void {
+    if (!this.currentTarget) {
+      return;
+    }
+
+    // Get the height at the target position
+    const targetHeight = this.getCurrentHeight(this.currentTarget.x, this.currentTarget.z);
+    const spawnerY = Math.max(targetHeight + 2, 2); // Place spawner at least 2 blocks above ground
+
+    // Place spawner block with dragons-stone texture
+    this.setBlock(this.currentTarget.x, spawnerY, this.currentTarget.z, this.spawnerBlockId);
+
+    // Track spawner position
+    const spawnerPosition = { x: this.currentTarget.x, y: spawnerY, z: this.currentTarget.z };
+    const posKey = `${spawnerPosition.x},${spawnerPosition.y},${spawnerPosition.z}`;
+    
+    this.spawnerPositions.add(posKey);
+    
+    // Link spawner position to target
+    this.currentTarget.spawnerPosition = spawnerPosition;
+    this.currentTarget.isActive = true;
+
+    console.log(`Terraforming spawner block created at: (${spawnerPosition.x}, ${spawnerPosition.y}, ${spawnerPosition.z})`);
+  }
+
+  /**
+   * Check if spawner block is still present at the given position
+   */
+  private isSpawnerBlockPresent(position: { x: number; y: number; z: number }): boolean {
+    try {
+      const blockId = this.world.chunkLattice.getBlockId(position);
+      return blockId === this.spawnerBlockId;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Handle spawner destruction by position
+   */
+  private onSpawnerDestroyed(position: { x: number; y: number; z: number }): void {
+    const posKey = `${position.x},${position.y},${position.z}`;
+    
+    // Find target associated with this spawner position
+    const target = this.findTargetByPosition(position.x, position.y, position.z);
+    
+    if (target) {
+      // Mark target as inactive
+      target.isActive = false;
+      target.spawnerPosition = undefined;
+      
+      console.log(`Spawner destroyed at (${position.x}, ${position.y}, ${position.z}) - terraforming stopped for this location`);
+      
+      // If this was the current target, select a new one
+      if (this.currentTarget === target) {
+        this.selectNewTarget();
+      }
+    }
+
+    // Remove from tracking
+    this.spawnerPositions.delete(posKey);
+  }
+
+  /**
+   * Get all spawner positions
+   */
+  getSpawnerPositions(): Array<{ x: number; y: number; z: number }> {
+    return Array.from(this.spawnerPositions).map(posKey => {
+      const parts = posKey.split(',');
+      const x = parseInt(parts[0]!, 10);
+      const y = parseInt(parts[1]!, 10);
+      const z = parseInt(parts[2]!, 10);
+      return { x, y, z };
+    });
+  }
+
+  /**
+   * Get count of spawners created
+   */
+  getSpawnerCount(): number {
+    return this.spawnerPositions.size;
+  }
+
+  /**
+   * Get all completed targets
+   */
+  getCompletedTargets(): TerraformingTarget[] {
+    return [...this.completedTargets];
+  }
+
+  /**
+   * Get active spawner positions (those that still exist)
+   */
+  getActiveSpawnerPositions(): Array<{ x: number; y: number; z: number }> {
+    return this.getSpawnerPositions().filter(pos => {
+      // Check if block still exists at this position
+      return this.isSpawnerBlockPresent(pos);
+    });
+  }
+
+  /**
    * Get current status information
    */
   getStatus(): {
@@ -239,6 +537,13 @@ export class Terraforming {
     size: number;
     currentTarget: TerraformingTarget | null;
     elevationSpeed: number;
+    spawnerCount: number;
+    spawnerPositions: Array<{ x: number; y: number; z: number }>;
+    activeSpawnerCount: number;
+    completedTargetsCount: number;
+    hasInitialSpawners: boolean;
+    initialSpawnPoints: Array<{ x: number; z: number }>;
+    spawnerSpreadRadius: number;
   } {
     return {
       isActive: this.isActive,
@@ -246,7 +551,43 @@ export class Terraforming {
       centerZ: this.centerZ,
       size: this.size,
       currentTarget: this.currentTarget,
-      elevationSpeed: this.elevationSpeed
+      elevationSpeed: this.elevationSpeed,
+      spawnerCount: this.getSpawnerCount(),
+      spawnerPositions: this.getSpawnerPositions(),
+      activeSpawnerCount: this.getActiveSpawnerPositions().length,
+      completedTargetsCount: this.completedTargets.length,
+      hasInitialSpawners: this.hasInitialSpawners,
+      initialSpawnPoints: this.initialSpawnPoints,
+      spawnerSpreadRadius: this.spawnerSpreadRadius,
     };
+  }
+
+  /**
+   * Check if a position is a spawner block
+   */
+  public isSpawnerBlock(x: number, y: number, z: number): boolean {
+    const posKey = `${x},${y},${z}`;
+    return this.spawnerPositions.has(posKey);
+  }
+
+  /**
+   * Find target by spawner position
+   */
+  private findTargetByPosition(x: number, y: number, z: number): TerraformingTarget | undefined {
+    // Check current target
+    if (this.currentTarget?.spawnerPosition && 
+        this.currentTarget.spawnerPosition.x === x &&
+        this.currentTarget.spawnerPosition.y === y &&
+        this.currentTarget.spawnerPosition.z === z) {
+      return this.currentTarget;
+    }
+    
+    // Check completed targets
+    return this.completedTargets.find(target => 
+      target.spawnerPosition &&
+      target.spawnerPosition.x === x &&
+      target.spawnerPosition.y === y &&
+      target.spawnerPosition.z === z
+    );
   }
 } 

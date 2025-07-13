@@ -1,53 +1,210 @@
-# Wilderness Terraforming Algorithm
+# Алгоритм Тераформінгу з Спавнером
 
-## Overview
-Terraforming in the wilderness is an automated, real-time process that gradually transforms the terrain by raising blocks in sections toward randomly chosen target points above the ground. The wilderness area is now 200x200 blocks, centered at (0,0,0), and made of clay blocks at y=0.
+## Огляд
 
-## Algorithm Steps
+Система тераформінгу створює динамічні параболічні пагорби у світі Hytopia з візуальним спавнером, який показує джерело тераформінгу.
 
-1. **Initialization**
-   - Define the wilderness area as a 200x200 grid, centered at (0,0,0), at y=0.
-   - All blocks start as clay at y=0.
+## Основні Компоненти
 
-2. **Target Point Selection**
-   - Randomly select a target point within the wilderness bounds.
-   - The target point should be 5 blocks above the current ground level (i.e., y=5).
-   - Example: (x, y=5, z), where x and z are random integers in [-100, 99].
+### 1. Спавнер Тераформінгу
 
-3. **Terraforming Step**
-   - Every 10 seconds, perform the following:
-     - Define a 10x10 area centered below the target point (i.e., from x-5 to x+4, z-5 to z+4).
-     - For each (x, z) in this area, check the current highest block at (x, z).
-     - If the current height is less than the target y (5), place a clay block at the next y level up (current y + 1).
-     - Repeat for all positions in the 10x10 area.
+**Призначення**: Візуальний індикатор центру тераформінгу
+- **Текстура**: `dragons-stone.png` (унікальна текстура для відрізнення)
+- **Розмір**: 1.4x1.4x1.4 блоки (трохи більше стандартного)
+- **Позиція**: Центр області тераформінгу + 2 блоки вгору
+- **Тип фізики**: FIXED (не рухається, не падає)
 
-4. **Completion Check**
-   - If all blocks in the 10x10 area have reached the target y (5), consider this target complete.
-   - Select a new random target point and repeat the process.
+```typescript
+// Створення спавнера
+this.spawnerEntity = new Entity({
+  name: 'Terraforming Spawner',
+  blockTextureUri: 'blocks/dragons-stone.png',
+  blockHalfExtents: { x: 0.7, y: 0.7, z: 0.7 },
+  rigidBodyOptions: {
+    type: RigidBodyType.FIXED,
+  },
+});
+```
 
-5. **Continuous Operation**
-   - The process runs indefinitely, always working toward a new target after the previous one is finished.
+### 2. Алгоритм Параболічного Росту
 
-## Pseudocode
-```js
-// Pseudocode for terraforming step
-function terraformStep() {
-  if (currentTarget == null || targetReached(currentTarget)) {
-    currentTarget = pickRandomTarget();
-  }
-  for (let x = currentTarget.x - 5; x < currentTarget.x + 5; x++) {
-    for (let z = currentTarget.z - 5; z < currentTarget.z + 5; z++) {
-      let currentY = getCurrentHeight(x, z);
-      if (currentY < currentTarget.y) {
-        setBlock(x, currentY + 1, z, 'clay');
-      }
+**Формула Параболи**: `heightMultiplier = max(0, 1 - (normalizedDistance²))`
+
+Де:
+- `normalizedDistance` = відстань від центру / максимальний радіус
+- `heightMultiplier` визначає висоту в конкретній точці
+
+### 3. Система Хвиль
+
+**Принцип**: Блоки з'являються хвилями, що розходяться від центру
+
+```typescript
+const currentWaveRadius = stepsElapsed * elevationSpeed;
+if (distanceFromCenter > currentWaveRadius) {
+  targetComplete = false;
+  continue; // Пропустити блоки поза поточною хвилею
+}
+```
+
+## Повний Цикл Тераформінгу
+
+### Фаза 1: Ініціалізація
+1. **Створення спавнера** в центрі області
+2. **Позиціонування** на висоті `currentHeight + 2`
+3. **Візуальна індикація** початку процесу
+
+### Фаза 2: Вибір Цілі
+1. **Випадковий вибір** позиції в межах області
+2. **Перевірка меж** з урахуванням розміру тераформінгу
+3. **Реєстрація часу** початку нової цілі
+
+### Фаза 3: Побудова Хвиль
+```typescript
+for (let x = target.x - halfSize; x < target.x + halfSize; x++) {
+  for (let z = target.z - halfSize; z < target.z + halfSize; z++) {
+    // 1. Перевірка меж області
+    if (!this.isWithinBounds(x, z)) continue;
+    
+    // 2. Розрахунок відстані від центру цілі
+    const distance = sqrt((x - target.x)² + (z - target.z)²);
+    
+    // 3. Перевірка поточної хвилі
+    if (distance > currentWaveRadius) continue;
+    
+    // 4. Розрахунок цільової висоти (парабола)
+    const heightMultiplier = max(0, 1 - (distance/maxRadius)²);
+    const targetHeight = floor(target.y * heightMultiplier);
+    
+    // 5. Поступове додавання блоків
+    if (currentHeight < targetHeight) {
+      setBlock(x, currentHeight + 1, z, blockTypeId);
     }
   }
 }
-// Call terraformStep() every 10 seconds
 ```
 
-## Notes
-- The algorithm can be adjusted to use different block types or heights as needed.
-- Care should be taken to avoid modifying the bunker area if it overlaps with the wilderness.
-- The process can be visualized as the wilderness "growing" upward in patches, always toward a new random point. 
+### Фаза 4: Завершення
+1. **Перевірка завершення** поточної цілі
+2. **Вибір нової цілі** або продовження поточної
+3. **Видалення спавнера** при зупинці
+
+## Параметри Конфігурації
+
+### Базові Параметри
+```typescript
+interface TerraformingOptions {
+  centerX: number;           // Центр X (обов'язково)
+  centerZ: number;           // Центр Z (обов'язково)
+  size: number;              // Розмір області (обов'язково)
+  targetHeight?: number;     // Макс. висота (за замовчуванням: 5)
+  intervalMs?: number;       // Інтервал кроків (за замовчуванням: 10000)
+  terraformSize?: number;    // Розмір пагорба (за замовчуванням: 10)
+  blockTypeId?: number;      // ID блоку (за замовчуванням: 2 - глина)
+  elevationSpeed?: number;   // Швидкість хвилі (за замовчуванням: 0.5)
+  spawnerBlockTypeId?: number; // ID спавнера (за замовчуванням: 3)
+}
+```
+
+### Рекомендовані Налаштування
+
+#### Для Швидкого Тестування:
+```typescript
+{
+  intervalMs: 2000,      // Швидкі кроки
+  elevationSpeed: 2,     // Швидкі хвилі
+  terraformSize: 8,      // Менші пагорби
+}
+```
+
+#### Для Реалістичного Процесу:
+```typescript
+{
+  intervalMs: 8000,      // Повільні кроки
+  elevationSpeed: 0.5,   // Повільні хвилі
+  terraformSize: 15,     // Великі пагорби
+}
+```
+
+#### Для Великомасштабного Тераформінгу:
+```typescript
+{
+  size: 100,             // Велика область
+  targetHeight: 20,      // Високі пагорби
+  intervalMs: 12000,     // Дуже повільні кроки
+}
+```
+
+## Стани Системи
+
+### 1. Неактивна
+- Спавнер: відсутній
+- Цілі: немає
+- Процес: зупинений
+
+### 2. Активна
+- Спавнер: створений і видимий
+- Цілі: активна ціль або вибір нової
+- Процес: виконуються кроки тераформінгу
+
+### 3. У Процесі Хвилі
+- Спавнер: активний
+- Поточна хвиля: розширюється від центру цілі
+- Блоки: додаються послідовно
+
+## API Методи для Спавнера
+
+### Основні Методи
+```typescript
+// Перевірка наявності спавнера
+terraforming.hasActiveSpawner(): boolean
+
+// Отримання сутності спавнера
+terraforming.getSpawner(): Entity | null
+
+// Повний статус включно зі спавнером
+terraforming.getStatus(): {
+  isActive: boolean;
+  hasSpawner: boolean;
+  spawnerPosition: { x, y, z } | null;
+  // ... інші поля
+}
+```
+
+### Приклад Моніторингу
+```typescript
+// Логування стану спавнера
+setInterval(() => {
+  const status = terraforming.getStatus();
+  
+  if (status.hasSpawner) {
+    console.log(`Спавнер активний на позиції: ${JSON.stringify(status.spawnerPosition)}`);
+  } else {
+    console.log('Спавнер неактивний');
+  }
+}, 5000);
+```
+
+## Візуальні Ефекти
+
+### Спавнер
+- **Унікальна текстура**: `dragons-stone.png` відрізняється від блоків тераформінгу
+- **Збільшений розмір**: 1.4x стандартного для помітності
+- **Стаціонарне положення**: не рухається і не падає
+
+### Тераформінг
+- **Параболічна форма**: природний вигляд пагорбів
+- **Хвильове розширення**: реалістична анімація росту
+- **Різні текстури**: підтримка різних типів блоків
+
+## Оптимізація
+
+### Продуктивність
+- **Обмежена область**: тільки в межах заданого розміру
+- **Пакетна обробка**: максимум один крок за інтервал
+- **Перевірка меж**: ранній вихід для блоків поза областю
+
+### Память
+- **Автоматичне очищення**: спавнер видаляється при зупинці
+- **Мінімальні дані**: тільки необхідна інформація про стан
+
+Ця система забезпечує візуально привабливий та функціональний процес тераформінгу з чітким джерелом (спавнером) для кращого користувацького досвіду. 

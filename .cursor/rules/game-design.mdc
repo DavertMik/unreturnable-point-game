@@ -1,6 +1,7 @@
 ---
 description: 
 globs: 
+alwaysApply: false
 ---
 # Game Rules
 
@@ -25,3 +26,6 @@ Infection is a terraporph game where terrain gets infected and expands to destro
 
 - The bunker and wilderness are stored as separate map files and merged at game start, so the bunker can be edited independently.
 
+## Development
+
+- do not update Readme.md unless explicilty asked to

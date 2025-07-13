@@ -12,6 +12,7 @@ class TerrainManager {
       // Bunker protection
       return false;
     }
+
     let tracker = this._blockDamages.get(key);
     if (!tracker) {
       tracker = { blockId: block.blockType.id, damage: 0 };
@@ -74,22 +75,25 @@ export class PickaxeEntity extends Entity {
     // Play player sword swing animation
     player.startModelOneshotAnimations(['simple-interact']);
 
-    // Compute horizontal facing direction (ignore Y)
-    const facing = player.player.camera.facingDirection;
-    const horizontalDir = { x: facing.x, y: 0, z: facing.z };
+    // Use horizontal facing direction for block breaking
+    const fullDirection = player.player.camera.facingDirection;
+    const horizontalDir = { x: fullDirection.x, y: 0, z: fullDirection.z };
     const length = Math.sqrt(horizontalDir.x * horizontalDir.x + horizontalDir.z * horizontalDir.z);
     if (length === 0) return;
     horizontalDir.x /= length;
     horizontalDir.z /= length;
 
-    // Try breaking two blocks vertically: at feet and one above
+    // Try breaking blocks horizontally
     const origins = [
       { x: player.position.x, y: player.position.y, z: player.position.z },
       { x: player.position.x, y: player.position.y + 1, z: player.position.z }
     ];
     let brokeBlock = false;
+    
     for (const origin of origins) {
       const hit = world.simulation.raycast(origin, horizontalDir, this.range, { filterExcludeRigidBody: player.rawRigidBody });
+      
+      // Check for blocks
       if (hit?.hitBlock) {
         // Prevent breaking the block the player is standing on
         const standingBlock = {
@@ -118,7 +122,11 @@ export class PickaxeEntity extends Entity {
         brokeBlock = true;
       }
     }
-    // Optionally: feedback if no block was broken
+    
+    // Provide feedback if nothing was hit
+    if (!brokeBlock) {
+      // Optionally: feedback if no block was broken
+    }
   }
 }
 
@@ -141,4 +149,7 @@ export function enableBlockBreaking(playerEntity: DefaultPlayerEntity) {
       input.ml = false;
     }
   });
-} 
+}
+
+// Export TerrainManager for terraforming integration
+export { TerrainManager }; 
